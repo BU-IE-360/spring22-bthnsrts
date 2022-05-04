@@ -1,0 +1,240 @@
+---
+title: "IE425 HW2. Batuhan Sarıtaş 2018402153"
+output: html_document
+---
+
+We are given the data containing quarterly gasoline and dieselş sales between 200* and 2006, and a number o potential independent variables. Our task is to construct a time
+series model and use regression to predict quarterly sales for year 2007. Firstly, let us examine the data.
+
+```{r include=FALSE}
+require(ggplot2)
+require(data.table)
+require(GGally)
+require(ggcorrplot)
+require(forecast)
+require(astsa)
+require(RcppRoll)
+require(zoo)
+require(cleaner)
+```
+
+```{r, echo=FALSE}
+
+setwd('C:/Users/batuk/OneDrive/Masaüstü/Scripts/R scripts')
+```
+
+
+```{r, echo=TRUE}
+
+data_path='IE360_Spring22_HW2_data.csv'
+sales = read.csv(data_path,colClasses=c('character',rep('numeric',10)))
+
+sales$Quarter=as.Date(as.yearqtr(sales$Quarter, format = "%Y_Q%q"))
+sales_test <- sales[c(29,30,31,32),]
+sales <- sales[c(1:28),]
+
+```
+
+```{r,echo=TRUE}
+summary(sales)
+```
+
+```{r,echo=TRUE}
+sales=data.table(sales)
+print(sales)
+```
+
+
+```{r}
+
+ggplot(sales, aes(x=Quarter,y=Unleaded.Gasoline.Sale..UGS., group = 1),
+) + geom_point() + geom_line() +labs(y ='Gasoline Sale in a Quarter (1000m^3)') + ggtitle('Time Series Plot for Gasoline Sales')
+```
+
+Time series of unleaded gasoline sales have highly time dependent mean and the mean is decreasing as the quarters pass. I think time series data is definitely not stationary in terms of its mean. On the other hand, its variance doesn't show significant fluctuations over time. Although variance between 2000 and 2002 is greater than the variance observed in the following years, visibly, time series might be claimed to have stationary variance. Let us check the stationary of this time series by using time windows for each year.
+
+```{r}
+time_window=4
+mean_series=roll_mean(sales$Unleaded.Gasoline.Sale..UGS.,time_window,align='left')
+var_series=roll_var(sales$Unleaded.Gasoline.Sale..UGS.,time_window,align='left')
+
+plot(mean_series,
+     type='l',col='red',
+     xlab = "quarter (t)",
+     ylab = "Rolling Mean (windows=4)",
+     main = "Mean series")
+
+plot(var_series,
+     type='l',col='red',
+     xlab = "quarter (t)",
+     ylab = "Rolling Variance (windows=4)",
+     main = "Variance series")
+```
+
+Rolling mean graph clearly shows the unstationarity in the time series. Rolling variance seems much more stable compared to mean. It is justified to claim that time series is not stationary as a conclusion.
+
+```{r}
+
+AutoCorrelation <- acf(sales$Unleaded.Gasoline.Sale..UGS., lag.max = 12, plot = FALSE) 
+plot(AutoCorrelation, main = "Gasoline Sale in a Quarter ACF")
+```
+
+Autocorrelation function of the time series shows us the existence of seasonality if any exists. It is observed that correlation is relatively high at each lag value multiple of 4. Autocorrelation patterns show yearly repetitions and it might be claimed that there is a seasonaliy between the nth quarter of year t and nth quarter of year t-1. Let us detrend the data creating windows for each 4 quarter and check the plot.
+
+```{r}
+
+ggplot(sales[1:(nrow(sales)-3),], aes(x=Quarter,y=Unleaded.Gasoline.Sale..UGS.-mean_series, group = 1),
+) + geom_point() + geom_line() +labs(y ='Gasoline Sale in a Quarter (1000m^3)') + ggtitle('Time Series Plot for Detrended Gasoline Sales')
+```
+
+Detrended time series shows the seasonality clearly. Each peak occurs at the interval of 4 data points.
+
+```{r}
+sales[,trend:=1:.N]
+quarter=seq(1,4,by=1)
+sales=cbind(sales,quarter)
+
+summary(sales)
+
+```
+
+
+```{r}
+fit <- lm(Unleaded.Gasoline.Sale..UGS.~trend+as.factor(quarter) -Quarter, data = sales)
+summary(fit)
+checkresiduals(fit)
+```
+ Let us check the correlations between independent variables and target variable in order to put some of the variable into our model and revise it.
+
+```{r}
+ggpairs(sales, lower = list(continuous = "smooth"),upper = list(continuous = wrap("cor", size = 2)))
+```
+
+We might use some of the features that have high correlation with the target variable. Let us put;
+
+X..Unleaded.Gasoline.Vehicles..NUGV.
+X..LPG.Vehicles..NLPG.
+
+```{r}
+
+fit <- lm(Unleaded.Gasoline.Sale..UGS.~trend+as.factor(quarter)
++X..LPG.Vehicles..NLPG. 
++X..Unleaded.Gasoline.Vehicles..NUGV., data = sales)
+summary(fit)
+checkresiduals(fit)
+```
+
+
+```{r}
+
+sales$lagged1_UGS <- na_replace(shift(sales$Unleaded.Gasoline.Sale..UGS., n=1))
+
+```
+
+```{r}
+
+fit <- lm(Unleaded.Gasoline.Sale..UGS.~trend+as.factor(quarter)
++X..LPG.Vehicles..NLPG. 
++X..Unleaded.Gasoline.Vehicles..NUGV.
++lagged1_UGS, data = sales)
+summary(fit)
+checkresiduals(fit)
+```
+
+
+NUGV seems to have no significant effect. Let us inspect the model without this feature.
+```{r}
+
+fit <- lm(Unleaded.Gasoline.Sale..UGS.~+trend+as.factor(quarter)
++X..LPG.Vehicles..NLPG.
++lagged1_UGS,
+data = sales)
+summary(fit)
+checkresiduals(fit)
+```
+
+Lastly let us check the model without any features coming from the original data in it.
+
+```{r}
+
+fit<- lm(Unleaded.Gasoline.Sale..UGS.~trend+as.factor(quarter)
++lagged1_UGS, data = sales)
+summary(fit)
+checkresiduals(fit)
+```
+
+Now we might choose our final model and validate it by inspecting both residuals and mode summary.
+
+# Final Model
+
+```{r}
+
+fit_final <- lm(Unleaded.Gasoline.Sale..UGS.~+trend+as.factor(quarter)
++X..LPG.Vehicles..NLPG.
++lagged1_UGS,
+data = sales)
+summary(fit_final)
+checkresiduals(fit_final)
+```
+
+
+This model is chosen since,
+
+1. p-value of the total regression is 1.457e-11
+2. Adjusted R-squared is 0.9325
+3. All variables except lagged UGS are significant. Lagged UGS feature adjusts the residual autocorrelation and makes the residual histogram similar to that of a normal distribution.
+4. Residuals do not show significant autocorrelation at any lags.
+5. Resiual plot seems randomly distribution around 0.
+6. Residual histogram seems to fit the normal distribution.
+  
+```{r}
+predicted_trend=predict(fit_final,sales)
+sales_test = data.table(sales_test)
+sales_test[,trend:=c(29:32)]
+quarter=seq(1,4,by=1)
+sales_test=cbind(sales_test,quarter)
+
+```
+
+```{r}
+
+predictions = rep(0,4)
+
+trend = 29
+quarter = 1
+lagged1_UGS = predicted_trend[28]
+predictions[1] = predict(fit_final,cbind(sales_test[1,],trend,quarter,lagged1_UGS))
+
+trend = 30
+quarter = 2
+lagged1_UGS = predictions[1]
+predictions[2] = predict(fit_final,cbind(sales_test[2,],trend,quarter,lagged1_UGS))
+
+trend = 31
+quarter = 3
+lagged1_UGS = predictions[2]
+predictions[3] = predict(fit_final,cbind(sales_test[3,],trend,quarter,lagged1_UGS))
+
+trend = 32
+quarter = 4
+lagged1_UGS = predictions[3]
+predictions[4] = predict(fit_final,cbind(sales_test[4,],trend,quarter,lagged1_UGS))
+
+
+sales_test$lagged1_UGS = c(predicted_trend[28],predictions[1:3])
+predicted_trend[29:32] = predictions
+
+```
+Our predictions are:
+```{r}
+print(predictions)
+```
+
+
+```{r}
+sales = rbind(sales, sales_test)
+sales = cbind(sales, predicted_trend)
+ggplot(sales ,aes(x=Quarter)) +
+        geom_line(aes(y=Unleaded.Gasoline.Sale..UGS.,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
